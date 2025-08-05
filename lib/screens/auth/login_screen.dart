@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../super_admin/super_admin_dashboard.dart';
+import '../principal/principal_dashboard.dart';
+import '../teacher/teacher_dashboard.dart';
+import '../student/student_dashboard.dart';
+import '../support_staff/dashboard.dart'; // adjust the path as needed
+
 
 class LoginScreen extends StatefulWidget {
   @override
@@ -25,18 +30,18 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
+  // Fixed the roles array to match Firebase collections and expected values
   final List<Map<String, String>> _roles = [
     {'display': 'Super Admin', 'value': 'superadmin'},
     {'display': 'Principal', 'value': 'principal'},
-    {'display': 'Teacher', 'value': 'teacher'},
-    {'display': 'Student', 'value': 'student'},
-    {'display': 'Support Staff', 'value': 'support_staff'},
+    {'display': 'Teachers', 'value': 'teachers'},
+    {'display': 'Students', 'value': 'students'}, // Fixed: changed to 'students' to match collection
+    {'display': 'Support Staff', 'value': 'supportstaff'},
   ];
 
   @override
   void initState() {
     super.initState();
-
     _animationController = AnimationController(
       vsync: this,
       duration: Duration(milliseconds: 1200),
@@ -64,91 +69,173 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     super.dispose();
   }
 
-  Future<void> _login() async {
+  Future<void> signIn() async {
     if (!_formKey.currentState!.validate()) return;
 
+    final String email = _emailController.text.trim();
+    final String password = _passwordController.text.trim();
+
     setState(() {
-      _isLoading = true;
-      _errorMessage = null;
+      _errorMessage = '';
     });
 
     try {
-      final userCredential = await _auth.signInWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
-      );
+      final UserCredential userCredential = await FirebaseAuth.instance
+          .signInWithEmailAndPassword(email: email, password: password);
 
-      final user = userCredential.user;
+      final User? user = userCredential.user;
       if (user == null) {
-        setState(() => _errorMessage = 'User authentication failed.');
+        setState(() => _errorMessage = 'Authentication failed');
         return;
       }
 
-      if (!user.emailVerified) {
-        await _auth.signOut();
-        setState(() => _errorMessage = 'Please verify your email before logging in.');
-        return;
+      // Get the role value from the selected display name
+      String selectedRoleValue = '';
+      for (var role in _roles) {
+        if (role['display'] == _selectedRole) {
+          selectedRoleValue = role['value']!;
+          break;
+        }
       }
-
-      String selectedRoleValue = _roles.firstWhere(
-            (role) => role['display'] == _selectedRole,
-        orElse: () => {'value': ''},
-      )['value'] ?? '';
 
       if (selectedRoleValue.isEmpty) {
-        setState(() => _errorMessage = 'Please select a role.');
+        setState(() => _errorMessage = 'Please select a role');
         return;
       }
 
-      final userDoc = await _firestore.collection(selectedRoleValue).doc(user.uid).get();
+      // 🔍 Fetch user document from Firestore
+      DocumentSnapshot? userDoc;
 
-      if (!userDoc.exists) {
-        await _auth.signOut();
-        setState(() => _errorMessage = 'User not found in $selectedRoleValue collection.');
+      if (selectedRoleValue == 'students') {
+        // Students: UID is used directly as document ID
+        final doc = await _firestore.collection('students').doc(user.uid).get();
+        if (!doc.exists) {
+          setState(() => _errorMessage = 'Student not found in students collection');
+          return;
+        }
+        userDoc = doc;
+      } else {
+        // All other roles: try where uid == user.uid first
+        final querySnapshot = await _firestore
+            .collection(selectedRoleValue)
+            .where('uid', isEqualTo: user.uid)
+            .limit(1)
+            .get();
+
+        if (querySnapshot.docs.isNotEmpty) {
+          userDoc = querySnapshot.docs.first;
+        } else {
+          // Fallback: check if UID is doc ID
+          final fallbackDoc = await _firestore
+              .collection(selectedRoleValue)
+              .doc(user.uid)
+              .get();
+          if (fallbackDoc.exists) {
+            userDoc = fallbackDoc;
+          } else if (selectedRoleValue == 'supportstaff') {
+            // Special case for support staff: try finding by email
+            final emailQuerySnapshot = await _firestore
+                .collection(selectedRoleValue)
+                .where('email', isEqualTo: user.email)
+                .limit(1)
+                .get();
+            if (emailQuerySnapshot.docs.isNotEmpty) {
+              userDoc = emailQuerySnapshot.docs.first;
+            }
+          }
+        }
+
+        if (userDoc == null || !userDoc.exists) {
+          setState(() => _errorMessage = 'User not found in $selectedRoleValue collection');
+          return;
+        }
+      }
+
+      Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
+
+      // Role verification - more flexible role checking
+      String userRole = (userData['role'] as String?)?.toLowerCase().trim() ?? '';
+
+      // Debug: Print the actual role value found
+      print('User role from Firebase: "$userRole"');
+      print('Expected role: "$selectedRoleValue"');
+
+      // Enhanced role matching logic
+      bool roleMatches = false;
+
+      if (selectedRoleValue == 'students') {
+        // If user is in students collection, assume they are a student
+        // Check role field only if it exists and is not empty
+        if (userRole.isEmpty) {
+          roleMatches = true; // Allow empty role for students collection
+        } else {
+          roleMatches = (userRole == 'student' || userRole == 'students');
+        }
+      } else if (selectedRoleValue == 'teachers') {
+        // For teachers, accept both 'teacher' and 'teachers'
+        roleMatches = (userRole == 'teacher' || userRole == 'teachers');
+      } else if (selectedRoleValue == 'superadmin') {
+        // For superadmin, accept variations
+        roleMatches = (userRole == 'superadmin' || userRole == 'super_admin' || userRole == 'super admin');
+      } else if (selectedRoleValue == 'principal') {
+        // For principal, exact match
+        roleMatches = (userRole == 'principal');
+      } else if (selectedRoleValue == 'supportstaff') {
+        // For support staff, accept variations (userRole is already lowercase)
+        // Handle "Support Staff" with capital letters and space
+        roleMatches = (userRole == 'supportstaff' ||
+            userRole == 'support staff' ||
+            userRole == 'supportstaff' ||
+            userRole == 'support_staff');
+      } else {
+        // Default: exact match
+        roleMatches = (userRole == selectedRoleValue);
+      }
+
+      if (!roleMatches) {
+        setState(() => _errorMessage = 'Role mismatch. Expected: $selectedRoleValue, Found: "$userRole"');
         return;
       }
 
-      final userData = userDoc.data();
-      if (userData == null || userData['role'] != selectedRoleValue) {
-        await _auth.signOut();
-        setState(() => _errorMessage =
-        'Role mismatch: your account role is "${userData?['role']}", but you selected "$selectedRoleValue".');
-        return;
-      }
-
-      if (selectedRoleValue == 'superadmin') {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => SuperAdminDashboard()),
-        );
-      }
-    } on FirebaseAuthException catch (e) {
-      String errorMessage;
-      switch (e.code) {
-        case 'user-not-found':
-          errorMessage = 'No user found with this email address.';
+      // ✅ Navigate to respective dashboard
+      switch (selectedRoleValue) {
+        case 'superadmin':
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => SuperAdminDashboard()),
+          );
           break;
-        case 'wrong-password':
-          errorMessage = 'Incorrect password.';
+        case 'principal':
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => PrincipalDashboard(principalId: user.uid)),
+          );
           break;
-        case 'invalid-email':
-          errorMessage = 'Invalid email address format.';
+        case 'teachers':
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => TeacherProfileScreen(teacherId: user.uid)),
+          );
           break;
-        case 'user-disabled':
-          errorMessage = 'This account has been disabled.';
+        case 'students': // Fixed: changed from 'student' to 'students'
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => StudentDashboard(studentId: user.uid)),
+          );
           break;
-        case 'too-many-requests':
-          errorMessage = 'Too many attempts. Try again later.';
+        case 'supportstaff':
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => SupportStaffDashboard(supportStaffId: user.uid)),
+          );
           break;
         default:
-          errorMessage = e.message ?? 'Authentication failed.';
+          setState(() => _errorMessage = 'Dashboard not implemented for $selectedRoleValue');
       }
-      setState(() => _errorMessage = errorMessage);
     } catch (e) {
-      setState(() => _errorMessage = 'Unexpected error: ${e.toString()}');
-      print("Login error: $e");
-    } finally {
-      setState(() => _isLoading = false);
+      setState(() {
+        _errorMessage = 'Login failed: ${e.toString()}';
+      });
     }
   }
 
@@ -203,7 +290,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                   child: _buildCardForm(),
                 ),
               )
-                  : _buildCardForm(), // fallback
+                  : _buildCardForm(),
             ),
           ),
         ),
@@ -230,7 +317,6 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                 Text("Sign in to access your dashboard", style: TextStyle(fontSize: 16)),
                 SizedBox(height: 32),
 
-                /// Role Dropdown
                 DropdownButtonFormField<String>(
                   value: _selectedRole,
                   items: _roles.map((role) {
@@ -250,7 +336,6 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                 ),
                 SizedBox(height: 20),
 
-                /// Email
                 _buildTextField(
                   label: 'Email',
                   icon: Icons.email,
@@ -263,7 +348,6 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                   },
                 ),
 
-                /// Password
                 _buildTextField(
                   label: 'Password',
                   icon: Icons.lock,
@@ -280,7 +364,6 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
                   (val == null || val.length < 6) ? 'Enter 6+ char password' : null,
                 ),
 
-                /// Error
                 if (_errorMessage != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 12.0),
@@ -292,21 +375,26 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
 
                 SizedBox(height: 20),
 
-                /// Sign In Button
                 SizedBox(
                   width: double.infinity,
                   height: 50,
                   child: ElevatedButton(
-                    onPressed: _isLoading ? null : _login,
+                    onPressed: _isLoading ? null : () async {
+                      setState(() => _isLoading = true);
+                      await signIn();
+                      setState(() => _isLoading = false);
+                    },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Color(0xFF667EEA),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                     ),
                     child: _isLoading
                         ? CircularProgressIndicator(color: Colors.white)
-                        : Text("Sign In"),
+                        : Text("Sign In", style: TextStyle(color: Colors.white)),
                   ),
                 ),
+
+                SizedBox(height: 16),
 
                 TextButton(
                   onPressed: () {
