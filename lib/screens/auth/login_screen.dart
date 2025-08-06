@@ -69,6 +69,26 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
     super.dispose();
   }
 
+  // Method to get dynamic prompt based on selected role
+  String _getPromptText() {
+    if (_selectedRole == null) return '';
+
+    switch (_selectedRole) {
+      case 'Super Admin':
+        return "Have an account? Sign in, or create a new Super Admin account.";
+      case 'Principal':
+        return "Password format: First 4 letters of your name (CAPS) + year of birth (e.g., JOHN1985)";
+      case 'Teachers':
+        return "Password format: First 4 letters of your name (CAPS) + year of birth (e.g., MARY1990)";
+      case 'Students':
+        return "Password format: First 4 letters of your name (CAPS) + year of birth (e.g., ALEX2005)";
+      case 'Support Staff':
+        return "Password format: First 4 letters of your name (CAPS) + year of birth (e.g., MIKE1988)";
+      default:
+        return '';
+    }
+  }
+
   Future<void> signIn() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -396,12 +416,38 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
 
                 SizedBox(height: 16),
 
-                TextButton(
-                  onPressed: () {
-                    Navigator.pushNamed(context, '/signup');
-                  },
-                  child: Text("Don't have an account? Create Super Admin Account"),
-                ),
+                // Dynamic prompt based on selected role
+                if (_selectedRole != null && _getPromptText().isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    margin: const EdgeInsets.only(bottom: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue.shade200),
+                    ),
+                    child: Text(
+                      _getPromptText(),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.blue.shade700,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+
+                // Show signup option only for Super Admin
+                if (_selectedRole == 'Super Admin')
+                  TextButton(
+                    onPressed: () {
+                      Navigator.pushNamed(context, '/signup');
+                    },
+                    child: Text(
+                      "Create Super Admin Account",
+                      style: TextStyle(color: Color(0xFF667EEA)),
+                    ),
+                  ),
               ],
             ),
           ),

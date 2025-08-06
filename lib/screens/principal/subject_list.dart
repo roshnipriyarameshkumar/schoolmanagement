@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class SubjectManagementScreen extends StatefulWidget {
   final String schoolId;
   final String principalId;
+
   const SubjectManagementScreen({
     super.key,
     required this.schoolId,
@@ -17,7 +18,7 @@ class SubjectManagementScreen extends StatefulWidget {
 class _SubjectManagementScreenState extends State<SubjectManagementScreen>
     with TickerProviderStateMixin {
 
-  // Blue Color Palette (matching SubjectCreationScreen)
+  // Blue Color Palette
   static const Color primaryBlue = Color(0xFF0F172A);
   static const Color secondaryBlue = Color(0xFF1E40AF);
   static const Color accentBlue = Color(0xFF3B82F6);
@@ -117,7 +118,6 @@ class _SubjectManagementScreenState extends State<SubjectManagementScreen>
     }
   }
 
-  // FIXED: Modified the _loadSubjects method to handle the composite index issue
   Future<void> _loadSubjects() async {
     try {
       Query<Map<String, dynamic>> subjectsQuery;
@@ -1386,6 +1386,10 @@ class _CreateSubjectDialogState extends State<CreateSubjectDialog> {
                       const SizedBox(height: 8),
                       Container(
                         constraints: const BoxConstraints(maxHeight: 150),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: paleBlue.withOpacity(0.3)),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                         child: SingleChildScrollView(
                           child: Column(
                             children: widget.teachers.map((teacher) {
@@ -1422,6 +1426,10 @@ class _CreateSubjectDialogState extends State<CreateSubjectDialog> {
                       const SizedBox(height: 8),
                       Container(
                         constraints: const BoxConstraints(maxHeight: 150),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: paleBlue.withOpacity(0.3)),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                         child: SingleChildScrollView(
                           child: Column(
                             children: widget.classes.map((klass) {
@@ -1670,8 +1678,17 @@ class _SubjectDetailsDialogState extends State<SubjectDetailsDialog> {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () {
-                      Navigator.pop(context);
-                      // You can implement edit functionality here
+                      Navigator.pop(context); // Close current dialog
+                      showDialog(
+                        context: context,
+                        barrierDismissible: false,
+                        builder: (context) => EditSubjectDialog(
+                          subject: widget.subject,
+                          teachers: widget.teachers,
+                          classes: widget.classes,
+                          onSubjectUpdated: widget.onSubjectUpdated,
+                        ),
+                      );
                     },
                     icon: const Icon(Icons.edit_outlined),
                     label: const Text('Edit'),
@@ -1813,39 +1830,488 @@ class _SubjectDetailsDialogState extends State<SubjectDetailsDialog> {
 
   void _showDeleteConfirmation() {
     showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Icon(Icons.warning_amber_rounded, color: Colors.orange[600], size: 28),
-            const SizedBox(width: 12),
-            const Text('Delete Subject'),
+        context: context,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange[600], size: 28),
+              const SizedBox(width: 12),
+              const Text('Delete Subject'),
+            ],
+          ),
+          content: Text(
+            'Are you sure you want to delete "${widget.subject['name']}"? This action cannot be undone.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                widget.onSubjectDeleted();
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text('Delete', style: TextStyle(color: Colors.white)),
+            ),
           ],
-        ),
-        content: Text(
-          'Are you sure you want to delete "${widget.subject['name']}"? This action cannot be undone.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              widget.onSubjectDeleted();
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+        )
     );
   }
 
   String _formatDate(Timestamp timestamp) {
     final date = timestamp.toDate();
     return '${date.day}/${date.month}/${date.year}';
+  }
+}
+
+// Edit Subject Dialog - Complete implementation
+class EditSubjectDialog extends StatefulWidget {
+  final Map<String, dynamic> subject;
+  final List<Map<String, dynamic>> teachers;
+  final List<Map<String, dynamic>> classes;
+  final VoidCallback onSubjectUpdated;
+
+  const EditSubjectDialog({
+    super.key,
+    required this.subject,
+    required this.teachers,
+    required this.classes,
+    required this.onSubjectUpdated,
+  });
+
+  @override
+  State<EditSubjectDialog> createState() => _EditSubjectDialogState();
+}
+
+class _EditSubjectDialogState extends State<EditSubjectDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _descriptionController = TextEditingController();
+
+  List<String> _selectedTeacherIds = [];
+  List<String> _selectedClassIds = [];
+  bool _isUpdating = false;
+
+  // Blue Color Palette
+  static const Color primaryBlue = Color(0xFF0F172A);
+  static const Color secondaryBlue = Color(0xFF1E40AF);
+  static const Color accentBlue = Color(0xFF3B82F6);
+  static const Color lightBlue = Color(0xFF60A5FA);
+  static const Color paleBlue = Color(0xFF93C5FD);
+  static const Color surfaceBlue = Color(0xFFF0F9FF);
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeFields();
+  }
+
+  void _initializeFields() {
+    _nameController.text = widget.subject['name'] ?? '';
+    _descriptionController.text = widget.subject['description'] ?? '';
+    _selectedTeacherIds = List<String>.from(widget.subject['teacherIds'] ?? []);
+    _selectedClassIds = List<String>.from(widget.subject['classIds'] ?? []);
+  }
+
+  Future<void> _updateSubject() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    if (_selectedTeacherIds.isEmpty) {
+      _showError('Please assign at least one teacher');
+      return;
+    }
+
+    if (_selectedClassIds.isEmpty) {
+      _showError('Please assign at least one class');
+      return;
+    }
+
+    setState(() {
+      _isUpdating = true;
+    });
+
+    try {
+      final subjectId = widget.subject['id'];
+      final oldTeacherIds = List<String>.from(widget.subject['teacherIds'] ?? []);
+      final oldClassIds = List<String>.from(widget.subject['classIds'] ?? []);
+
+      // Update subject document
+      await FirebaseFirestore.instance
+          .collection('subjects')
+          .doc(subjectId)
+          .update({
+        'name': _nameController.text.trim(),
+        'description': _descriptionController.text.trim(),
+        'teacherIds': _selectedTeacherIds,
+        'classIds': _selectedClassIds,
+        'teachersAssigned': _selectedTeacherIds,
+        'classesAssigned': _selectedClassIds,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Handle teacher assignments
+      await _updateTeacherAssignments(subjectId, oldTeacherIds, _selectedTeacherIds, _selectedClassIds);
+
+      // Handle class assignments
+      await _updateClassAssignments(subjectId, oldClassIds, _selectedClassIds);
+
+      _showSuccess('Subject updated successfully!');
+      widget.onSubjectUpdated();
+      Navigator.pop(context);
+
+    } catch (e) {
+      _showError('Failed to update subject: $e');
+    } finally {
+      setState(() {
+        _isUpdating = false;
+      });
+    }
+  }
+
+  Future<void> _updateTeacherAssignments(
+      String subjectId,
+      List<String> oldTeacherIds,
+      List<String> newTeacherIds,
+      List<String> classIds
+      ) async {
+    // Remove subject from teachers who are no longer assigned
+    final removedTeacherIds = oldTeacherIds.where((id) => !newTeacherIds.contains(id)).toList();
+    for (final teacherId in removedTeacherIds) {
+      await FirebaseFirestore.instance
+          .collection('teachers')
+          .doc(teacherId)
+          .update({
+        'subjectIds': FieldValue.arrayRemove([subjectId]),
+        'subjectsAssigned': FieldValue.arrayRemove([subjectId]),
+      });
+    }
+
+    // Add subject to newly assigned teachers
+    final addedTeacherIds = newTeacherIds.where((id) => !oldTeacherIds.contains(id)).toList();
+    for (final teacherId in addedTeacherIds) {
+      await FirebaseFirestore.instance
+          .collection('teachers')
+          .doc(teacherId)
+          .update({
+        'subjectIds': FieldValue.arrayUnion([subjectId]),
+        'subjectsAssigned': FieldValue.arrayUnion([subjectId]),
+        'classesAssigned': FieldValue.arrayUnion(classIds),
+      });
+    }
+
+    // Update class assignments for existing teachers
+    for (final teacherId in newTeacherIds.where((id) => oldTeacherIds.contains(id))) {
+      await FirebaseFirestore.instance
+          .collection('teachers')
+          .doc(teacherId)
+          .update({
+        'classesAssigned': FieldValue.arrayUnion(classIds),
+      });
+    }
+  }
+
+  Future<void> _updateClassAssignments(String subjectId, List<String> oldClassIds, List<String> newClassIds) async {
+    // Remove subject from classes that are no longer assigned
+    final removedClassIds = oldClassIds.where((id) => !newClassIds.contains(id)).toList();
+    for (final classId in removedClassIds) {
+      await FirebaseFirestore.instance
+          .collection('classes')
+          .doc(classId)
+          .update({
+        'subjectIds': FieldValue.arrayRemove([subjectId]),
+      });
+    }
+
+    // Add subject to newly assigned classes
+    final addedClassIds = newClassIds.where((id) => !oldClassIds.contains(id)).toList();
+    for (final classId in addedClassIds) {
+      await FirebaseFirestore.instance
+          .collection('classes')
+          .doc(classId)
+          .update({
+        'subjectIds': FieldValue.arrayUnion([subjectId]),
+      });
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: Colors.red[400],
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white),
+            const SizedBox(width: 8),
+            Expanded(child: Text(message)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: Colors.green,
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white),
+            const SizedBox(width: 8),
+            Expanded(child: Text(message)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 600, maxHeight: 700),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [accentBlue.withOpacity(0.1), lightBlue.withOpacity(0.1)],
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.edit_outlined, color: secondaryBlue, size: 24),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Edit Subject',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: primaryBlue,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close, color: primaryBlue),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Form
+            Expanded(
+              child: Form(
+                key: _formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Subject Name
+                      TextFormField(
+                        controller: _nameController,
+                        decoration: InputDecoration(
+                          labelText: 'Subject Name',
+                          prefixIcon: const Icon(Icons.book_outlined, color: secondaryBlue),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(color: accentBlue, width: 2),
+                          ),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Please enter subject name';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Description
+                      TextFormField(
+                        controller: _descriptionController,
+                        maxLines: 3,
+                        decoration: InputDecoration(
+                          labelText: 'Description',
+                          prefixIcon: const Icon(Icons.description_outlined, color: secondaryBlue),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(color: accentBlue, width: 2),
+                          ),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Please enter description';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Teachers Section
+                      const Text(
+                        'Assign Teachers',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: primaryBlue,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        constraints: const BoxConstraints(maxHeight: 150),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: paleBlue.withOpacity(0.3)),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: SingleChildScrollView(
+                          child: Column(
+                            children: widget.teachers.map((teacher) {
+                              final isSelected = _selectedTeacherIds.contains(teacher['id']);
+                              return CheckboxListTile(
+                                title: Text(teacher['name']),
+                                subtitle: Text('Subjects: ${teacher['subjects'].join(', ')}'),
+                                value: isSelected,
+                                activeColor: accentBlue,
+                                onChanged: (selected) {
+                                  setState(() {
+                                    if (selected == true) {
+                                      _selectedTeacherIds.add(teacher['id']);
+                                    } else {
+                                      _selectedTeacherIds.remove(teacher['id']);
+                                    }
+                                  });
+                                },
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Classes Section
+                      const Text(
+                        'Assign Classes',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: primaryBlue,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        constraints: const BoxConstraints(maxHeight: 150),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: paleBlue.withOpacity(0.3)),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: SingleChildScrollView(
+                          child: Column(
+                            children: widget.classes.map((klass) {
+                              final isSelected = _selectedClassIds.contains(klass['id']);
+                              return CheckboxListTile(
+                                title: Text('Grade ${klass['name']}'),
+                                subtitle: Text('Capacity: ${klass['capacity']} students'),
+                                value: isSelected,
+                                activeColor: accentBlue,
+                                onChanged: (selected) {
+                                  setState(() {
+                                    if (selected == true) {
+                                      _selectedClassIds.add(klass['id']);
+                                    } else {
+                                      _selectedClassIds.remove(klass['id']);
+                                    }
+                                  });
+                                },
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // Action Buttons
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      side: const BorderSide(color: accentBlue),
+                    ),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(color: accentBlue, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _isUpdating ? null : _updateSubject,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: accentBlue,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: _isUpdating
+                        ? const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                        : const Text(
+                      'Update Subject',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
   }
 }
